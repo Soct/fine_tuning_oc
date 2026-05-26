@@ -5,6 +5,10 @@ build/
 dist/
 wheels/
 *.egg-info
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual environments
 .venv
@@ -12,3 +16,24 @@ wheels/
 # Local caches and notebooks
 .cache/
 .ipynb_checkpoints/
+unsloth_compiled_cache/
+**/unsloth_compiled_cache/
+.DS_Store
+.codex/
+.agents/
+
+# Training outputs
+sft_output/
+dpo_output/
+qwen3-medical-lora/
+**/sft_output/
+**/dpo_output/
+**/qwen3-medical-lora/
+**/qwen3-medical-dpo-lora/
+**/tensorboard/
+
+# Evaluation outputs
+eval_results/
+eval_results copy/
+**/eval_results/
+**/eval_results copy/
