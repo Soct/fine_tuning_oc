@@ -24,7 +24,7 @@ jobs:
         run: uv run --project deployment --group dev python -m compileall app tests
 
       - name: Run tests
-        run: uv run --project deployment --group dev pytest -q
+        run: uv run --project deployment --group dev pytest tests/ -q
 
       - name: Build Docker image
         run: docker build -t fine-tuning-oc-api:ci .
