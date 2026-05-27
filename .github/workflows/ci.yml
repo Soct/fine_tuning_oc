@@ -45,16 +45,14 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SA_EMAIL }}
-
-      - uses: google-github-actions/setup-gcloud@v2
-        with:
-          # On ajoute ces deux lignes pour stabiliser l'authentification WIF
-          project_id: ${{ secrets.GCP_PROJECT }}
+          create_credentials_file: true
 
       - name: Build & push image
         run: |
+          # On utilise --project ici directement au lieu de faire "gcloud config set"
           gcloud builds submit \
             --project=${{ secrets.GCP_PROJECT }} \
+            --region=europe-west1 \
             --tag europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }} \
             .
 
