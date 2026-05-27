@@ -10,6 +10,7 @@ dependencies = [
     "datasets>=3.2.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.10.0",
+    "openai>=2.38.0",
     "pandas>=2.2.3",
     "peft>=0.7.1",
     "presidio-analyzer>=2.2.362",
@@ -21,4 +22,9 @@ dependencies = [
     "trl>=0.7.9",
     "unsloth>=2026.5.2",
     "unsloth-zoo>=2026.5.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
 ]
