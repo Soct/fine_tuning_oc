@@ -67,7 +67,35 @@ Installation :
 uv sync
 ```
 
+Pour installer aussi les outils de validation locaux :
+
+```bash
+uv sync --group dev
+```
+
 L'entrainement necessite un GPU CUDA. Les notebooks le verifient explicitement avec `torch.cuda.is_available()`.
+
+## Notebooks de reference
+
+Pour la presentation, les notebooks sont les artefacts de reference. Ce sont eux qui portent le workflow reel execute pendant le projet. Il vaut mieux l'assumer explicitement plutot que presenter des scripts Python secondaires qui ne couvriraient pas exactement les memes cellules, controles et sorties.
+
+- `notebooks/hf_medical_datasets_eda.ipynb` : preparation des sources, normalisation, anonymisation, deduplication, split SFT et controle PII.
+- `notebooks/colab_qwen3_unsloth_finetune.ipynb` : entrainement SFT puis DPO, avec hyperparametres, logs TensorBoard et exports LoRA.
+- `notebooks/colab_qwen3_unsloth_eval_compare.ipynb` : comparaison modele de base vs modele fine-tune sur le split de test.
+
+Ordre conseille pour la soutenance :
+
+1. montrer la construction du dataset et l'anonymisation dans `hf_medical_datasets_eda.ipynb`
+2. montrer les cellules de configuration, SFT et DPO dans `colab_qwen3_unsloth_finetune.ipynb`
+3. montrer l'evaluation quantitative dans `colab_qwen3_unsloth_eval_compare.ipynb`
+
+Commande utile pour les ouvrir localement :
+
+```bash
+uv run jupyter lab
+```
+
+Si un evaluateur demande ou se trouve le script d'entrainement, la reponse defendable ici est que le notebook d'entrainement est le script executable du POC, avec toutes les etapes, verifications et sorties intermediaires.
 
 ## Sources de donnees
 
@@ -329,17 +357,39 @@ Le depot contient maintenant une API FastAPI minimale dans `app/` avec :
 - `POST /generate` : generation de texte via un backend d'inference ;
 - logs JSON par requete, reponse et generation ;
 - backend local `echo` par defaut pour valider le packaging sans GPU ;
+- backend `vllm` pour connecter FastAPI a un serveur OpenAI-compatible local ou distant ;
 - tests Pytest dans `tests/` ;
 - Dockerfile et workflow GitHub Actions ;
 - dependances API isolees dans `deployment/pyproject.toml`.
 
-Le backend par defaut ne remplace pas le modele fine-tune. Il sert de fallback leger pour le POC local, la CI et les tests Docker. La justification du choix vLLM pour une cible production est documentee dans `docs/vllm.md`.
+Le backend par defaut ne remplace pas le modele fine-tune. Il sert de fallback leger pour le POC local, la CI et les tests Docker. Le backend `vllm` permet maintenant a FastAPI d'appeler un serveur vLLM local ou distant. La justification du choix vLLM pour une cible production est documentee dans `docs/vllm.md`.
 
 ### Lancer l'API en local avec uv
 
 ```bash
 uv run --project deployment --no-dev uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+### Lancer FastAPI avec vLLM en local
+
+1. D'abord lancer un serveur vLLM sur la machine GPU :
+
+```bash
+vllm serve unsloth/Qwen3-1.7B-unsloth-bnb-4bit \
+  --host 0.0.0.0 \
+  --port 8001
+```
+
+2. Ensuite lancer l'API FastAPI comme facade HTTP :
+
+```bash
+INFERENCE_BACKEND=vllm \
+VLLM_BASE_URL=http://127.0.0.1:8001 \
+MODEL_ID=unsloth/Qwen3-1.7B-unsloth-bnb-4bit \
+uv run --project deployment --no-dev uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+L'API enverra alors les requetes `POST /generate` au serveur vLLM via l'endpoint OpenAI-compatible `/v1/chat/completions`.
 
 ### Exemple curl
 
@@ -366,6 +416,31 @@ docker build -t fine-tuning-oc-api .
 docker run --rm -p 8000:8000 fine-tuning-oc-api
 ```
 
+Pour brancher le conteneur FastAPI a un serveur vLLM existant :
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e INFERENCE_BACKEND=vllm \
+  -e VLLM_BASE_URL=http://host.docker.internal:8001 \
+  -e MODEL_ID=unsloth/Qwen3-1.7B-unsloth-bnb-4bit \
+  fine-tuning-oc-api
+```
+
+### Deploiement Google Cloud
+
+Approche recommandee :
+
+1. une VM GPU Google Compute Engine pour vLLM ;
+2. soit la meme VM, soit une VM CPU legere pour FastAPI ;
+3. FastAPI pointe vers `VLLM_BASE_URL=http://<ip-privee-ou-publique>:8001`.
+
+Chemin minimal defendable pour une soutenance :
+
+1. lancer `vllm serve` sur une VM GPU ;
+2. lancer FastAPI avec `INFERENCE_BACKEND=vllm` ;
+3. tester avec `curl` sur l'endpoint FastAPI ;
+4. presenter la separation entre couche API et moteur d'inference.
+
 ### CI/CD
 
 Le workflow `.github/workflows/ci.yml` execute :
@@ -385,14 +460,75 @@ Le workflow `.github/workflows/ci.yml` execute :
    - `scripts/train_sft.py`
    - `scripts/train_dpo.py`
    - `scripts/evaluate.py`
-5. Ajouter une API d'inference avec logs auditables.
-6. Ajouter Docker et tests Pytest.
-7. Ajouter une CI GitHub Actions.
+5. Valider en bout en bout le couple FastAPI + vLLM avec le vrai modele fine-tune.
+6. Mesurer latence, debit et consommation GPU sur un jeu de prompts representatif.
+7. Preparer un deploiement Google Cloud documente et reproductible.
 8. Rediger un rapport technique avec cout GPU, latence, debit, analyse critique et recommandations de passage a l'echelle.
 
 ## Versioning
 
 Le dossier de travail contient les artefacts de preparation, d'entrainement et d'evaluation. Les fichiers sont destines a etre versionnes dans le depot du projet, et les datasets/modeles sont references via Hugging Face Hub.
+
+## Publication sur Hugging Face Hub
+
+Le workflow de reference pour publier les artefacts sur Hugging Face reste celui des notebooks.
+
+### Datasets
+
+Le notebook `notebooks/hf_medical_datasets_eda.ipynb` pousse deja les datasets via :
+
+- `sft_5000_dataset.push_to_hub(sft_hub_id, private=True)`
+- `dpo_5000_dataset.push_to_hub(dpo_hub_id, private=True)`
+
+Les IDs actuellement utilises dans le projet sont :
+
+- `datasets/Maphe/medical-sft-5k`
+- `datasets/Maphe/medical-dpo-5k`
+
+### Modele fine-tune
+
+Le notebook `notebooks/colab_qwen3_unsloth_finetune.ipynb` prepare deja le push du modele avec :
+
+- `HF_USERNAME`
+- `OUTPUT_HUB_ID = f"{HF_USERNAME}/qwen3-1.7b-medical-finetuned"`
+- `PUSH_TO_HUB = False`
+- `PRIVATE_HUB_REPO = True`
+
+Le push effectif est realise par :
+
+```python
+model.push_to_hub_merged(
+  OUTPUT_HUB_ID,
+  tokenizer,
+  private=PRIVATE_HUB_REPO,
+)
+```
+
+### Procedure conseillee
+
+1. Se connecter au Hub avec un token ayant le droit `write`.
+2. Verifier que `HF_USERNAME` et `OUTPUT_HUB_ID` pointent vers le bon repo cible.
+3. Laisser `PRIVATE_HUB_REPO = True` pour un premier push de verification.
+4. Mettre `PUSH_TO_HUB = True` dans le notebook d'entrainement.
+5. Relancer uniquement la cellule finale d'export/push du notebook.
+6. Verifier le repo modele cree sur Hugging Face.
+
+### Publication locale via token
+
+En local, la voie la plus simple reste :
+
+```python
+from huggingface_hub import login
+login()
+```
+
+Puis execution de la cellule finale du notebook.
+
+### URL finale attendue
+
+Une fois pousse, ajouter ici l'URL finale du modele, par exemple :
+
+- `https://huggingface.co/<username>/qwen3-1.7b-medical-finetuned`
 
 Pour un rendu final, ajouter ici :
 
