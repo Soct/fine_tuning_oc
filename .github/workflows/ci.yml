@@ -43,13 +43,14 @@ jobs:
 
       - uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_SA_EMAIL }}
+          workload_identity_provider: '${{ secrets.GCP_WIF_PROVIDER }}'
+          service_account: '${{ secrets.GCP_SA_EMAIL }}'
+          # Cette option est vitale : elle rend les identifiants disponibles en tant que fichier
           create_credentials_file: true
 
       - name: Build & push image
         run: |
-          # On utilise --project ici directement au lieu de faire "gcloud config set"
+          # gcloud utilisera automatiquement le fichier créé par l'étape auth
           gcloud builds submit \
             --project=${{ secrets.GCP_PROJECT }} \
             --region=europe-west1 \
