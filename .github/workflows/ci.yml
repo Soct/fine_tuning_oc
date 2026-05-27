@@ -46,25 +46,19 @@ jobs:
         with:
           workload_identity_provider: '${{ secrets.GCP_WIF_PROVIDER }}'
           service_account: '${{ secrets.GCP_SA_EMAIL }}'
-          create_credentials_file: true
 
-      - name: Build & push image
-        env:
-          # On pointe explicitement vers le fichier créé par l'étape 'auth'
-          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: '${{ steps.auth.outputs.credentials_file_path }}'
-          # On désactive l'impersonnation qui provoque l'erreur 403
-          CLOUDSDK_AUTH_DISABLE_IMPERSONATION: 'true'
+      - name: Build and Push Docker Image
         run: |
-          gcloud builds submit \
-            --project=${{ secrets.GCP_PROJECT }} \
-            --region=europe-west1 \
-            --tag europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }} \
-            .
+          # 1. Configurer Docker pour utiliser les credentials générés par l'étape auth
+          gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+          
+          # 2. Build manuel de l'image
+          docker build -t europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }} .
+          
+          # 3. Push manuel vers Artifact Registry
+          docker push europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }}
 
       - name: Deploy to Cloud Run
-        env:
-          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: '${{ steps.auth.outputs.credentials_file_path }}'
-          CLOUDSDK_AUTH_DISABLE_IMPERSONATION: 'true'
         run: |
           gcloud run deploy fine-tuning-oc-api \
             --image europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }} \
