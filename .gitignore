@@ -12,7 +12,7 @@ wheels/
 
 # Virtual environments
 .venv
-
+.env
 # Local caches and notebooks
 .cache/
 .ipynb_checkpoints/
