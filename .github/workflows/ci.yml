@@ -47,10 +47,14 @@ jobs:
           service_account: ${{ secrets.GCP_SA_EMAIL }}
 
       - uses: google-github-actions/setup-gcloud@v2
+        with:
+          # On ajoute ces deux lignes pour stabiliser l'authentification WIF
+          project_id: ${{ secrets.GCP_PROJECT }}
 
       - name: Build & push image
         run: |
           gcloud builds submit \
+            --project=${{ secrets.GCP_PROJECT }} \
             --tag europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }} \
             .
 
