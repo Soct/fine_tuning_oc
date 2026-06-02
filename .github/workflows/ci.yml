@@ -38,11 +38,6 @@ jobs:
       contents: read
       id-token: write
 
-    env:
-      GCP_REGION: europe-west1
-      GAR_REPOSITORY: fine-tuning-oc
-      GAR_IMAGE: api
-
     steps:
       - uses: actions/checkout@v4
 
@@ -51,38 +46,23 @@ jobs:
         with:
           workload_identity_provider: '${{ secrets.GCP_WIF_PROVIDER }}'
           service_account: '${{ secrets.GCP_SA_EMAIL }}'
-          token_format: 'access_token'
-
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Check Artifact Registry access
-        run: |
-          gcloud services describe artifactregistry.googleapis.com \
-            --project "${{ secrets.GCP_PROJECT }}" \
-            --format='value(state)'
-
-          gcloud artifacts repositories describe "$GAR_REPOSITORY" \
-            --location "$GCP_REGION" \
-            --project "${{ secrets.GCP_PROJECT }}"
-
-      - name: Login to Artifact Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.GCP_REGION }}-docker.pkg.dev
-          username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.access_token }}
 
       - name: Build and Push Docker Image
         run: |
-          docker build -t $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/$GAR_REPOSITORY/$GAR_IMAGE:${{ github.sha }} .
-          docker push $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/$GAR_REPOSITORY/$GAR_IMAGE:${{ github.sha }}
+          # 1. Configurer Docker pour utiliser les credentials générés par l'étape auth
+          gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+          
+          # 2. Build manuel de l'image
+          docker build -t europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }} .
+          
+          # 3. Push manuel vers Artifact Registry
+          docker push europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }}
 
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy fine-tuning-oc-api \
-            --image $GCP_REGION-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/$GAR_REPOSITORY/$GAR_IMAGE:${{ github.sha }} \
-            --region $GCP_REGION \
+            --image europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }} \
+            --region europe-west1 \
             --platform managed \
             --allow-unauthenticated \
             --set-env-vars "INFERENCE_BACKEND=vllm,MODEL_ID=${{ secrets.MODEL_ID }},VLLM_BASE_URL=${{ secrets.VLLM_BASE_URL }}"
