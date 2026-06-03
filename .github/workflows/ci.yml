@@ -29,7 +29,7 @@ jobs:
       - name: Build Docker image
         run: docker build -t fine-tuning-oc-api:ci .
 
-  deploy:
+  publish:
     needs: api
     runs-on: ubuntu-latest
     environment: GCP
@@ -44,25 +44,25 @@ jobs:
       - id: 'auth'
         uses: 'google-github-actions/auth@v2'
         with:
+          project_id: '${{ secrets.GCP_PROJECT }}'
           workload_identity_provider: '${{ secrets.GCP_WIF_PROVIDER }}'
           service_account: '${{ secrets.GCP_SA_EMAIL }}'
 
+      - name: Set up gcloud
+        uses: 'google-github-actions/setup-gcloud@v3'
+        with:
+          version: '>= 363.0.0'
+
       - name: Build and Push Docker Image
         run: |
-          # 1. Configurer Docker pour utiliser les credentials générés par l'étape auth
-          gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
-          
-          # 2. Build manuel de l'image
-          docker build -t europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }} .
-          
-          # 3. Push manuel vers Artifact Registry
-          docker push europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }}
+          IMAGE_BASE="europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api"
 
-      - name: Deploy to Cloud Run
-        run: |
-          gcloud run deploy fine-tuning-oc-api \
-            --image europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/fine-tuning-oc/api:${{ github.sha }} \
-            --region europe-west1 \
-            --platform managed \
-            --allow-unauthenticated \
-            --set-env-vars "INFERENCE_BACKEND=vllm,MODEL_ID=${{ secrets.MODEL_ID }},VLLM_BASE_URL=${{ secrets.VLLM_BASE_URL }}"
+          gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+
+          docker build \
+            -t "${IMAGE_BASE}:${{ github.sha }}" \
+            -t "${IMAGE_BASE}:latest" \
+            .
+
+          docker push "${IMAGE_BASE}:${{ github.sha }}"
+          docker push "${IMAGE_BASE}:latest"
