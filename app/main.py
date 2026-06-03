@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 
 from app.inference import build_backend
 from app.schemas import GenerateRequest, GenerateResponse, HealthResponse, UsageStats
@@ -160,14 +160,14 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/logs/download")
-    def download_logs() -> FileResponse:
+    def download_logs() -> Response:
         log_path = app.state.log_path
         if not log_path.exists():
             raise HTTPException(status_code=404, detail="Log file not found")
-        return FileResponse(
-            path=log_path,
+        return Response(
+            content=log_path.read_bytes(),
             media_type="text/plain; charset=utf-8",
-            filename=log_path.name,
+            headers={"content-disposition": f'attachment; filename="{log_path.name}"'},
         )
 
     return app
