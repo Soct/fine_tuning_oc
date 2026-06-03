@@ -62,7 +62,11 @@ def test_download_logs_returns_generated_entries(echo_client: TestClient) -> Non
     body = response.text
     assert '"event": "request"' in body
     assert '"path": "/generate"' in body
-    assert '"event": "generation"' in body
+    assert '"event": "generation_request"' in body
+    assert '"event": "generation_response"' in body
+    assert '"prompt": "Quels sont les signes d\'alerte ?"' in body
+    assert '"response": "POC fallback response.' in body
+    assert '"duration_ms":' in body
     assert '"event": "response"' in body
 
 

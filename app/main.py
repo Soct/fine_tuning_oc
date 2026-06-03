@@ -41,6 +41,7 @@ _GENERATE_EXAMPLES = {
 logger = logging.getLogger("inference_api")
 logger.setLevel(logging.INFO)
 logger.propagate = False
+DEFAULT_LOG_PREVIEW_CHARS = 500
 
 
 def configure_logging() -> Path:
@@ -65,6 +66,13 @@ def log_json(event: str, **fields: object) -> None:
     logger.info(json.dumps({"event": event, **fields}, ensure_ascii=True))
 
 
+def preview_text(value: str, limit: int = DEFAULT_LOG_PREVIEW_CHARS) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Fine-tuning OC inference API", version="0.1.0")
     app.state.backend = None
@@ -80,6 +88,7 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def request_response_logger(request: Request, call_next: Callable) -> Response:
         request_id = request.headers.get("x-request-id", str(uuid.uuid4()))
+        request.state.request_id = request_id
         start = time.perf_counter()
         log_json(
             "request",
@@ -120,21 +129,40 @@ def create_app() -> FastAPI:
         return HealthResponse(status="ok", backend=current_backend.name, model_id=current_backend.model_id)
 
     @app.post("/generate", response_model=GenerateResponse)
-    def generate(payload: GenerateRequest = Body(openapi_examples=_GENERATE_EXAMPLES)) -> GenerateResponse:
+    def generate(
+        request: Request,
+        payload: GenerateRequest = Body(openapi_examples=_GENERATE_EXAMPLES),
+    ) -> GenerateResponse:
         try:
             current_backend = get_backend()
         except Exception as exc:
             log_json("backend_init_error", error=exc.__class__.__name__, detail=str(exc))
             raise HTTPException(status_code=500, detail="Backend initialization failed") from exc
+        request_id = getattr(request.state, "request_id", None)
+        generation_start = time.perf_counter()
+        log_json(
+            "generation_request",
+            request_id=request_id,
+            backend=current_backend.name,
+            model_id=current_backend.model_id,
+            prompt=preview_text(payload.prompt),
+            prompt_chars=len(payload.prompt),
+            max_new_tokens=payload.max_new_tokens,
+            temperature=payload.temperature,
+        )
         result = current_backend.generate(
             prompt=payload.prompt,
             max_new_tokens=payload.max_new_tokens,
             temperature=payload.temperature,
         )
+        generation_duration_ms = round((time.perf_counter() - generation_start) * 1000, 2)
         log_json(
-            "generation",
+            "generation_response",
+            request_id=request_id,
             backend=current_backend.name,
             model_id=current_backend.model_id,
+            duration_ms=generation_duration_ms,
+            response=preview_text(result.text),
             prompt_chars=len(payload.prompt),
             output_chars=len(result.text),
             prompt_tokens=result.prompt_tokens,
