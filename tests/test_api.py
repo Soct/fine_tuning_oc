@@ -1,4 +1,6 @@
 from collections.abc import Iterator
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import httpx
 import pytest
@@ -10,9 +12,11 @@ from app.main import create_app
 @pytest.fixture
 def echo_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setenv("INFERENCE_BACKEND", "echo")
-    app = create_app()
-    with TestClient(app) as client:
-        yield client
+    with TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("API_LOG_PATH", str(Path(tmpdir) / "api.log"))
+        app = create_app()
+        with TestClient(app) as client:
+            yield client
 
 
 def test_health_returns_status(echo_client: TestClient) -> None:
@@ -44,6 +48,24 @@ def test_generate_rejects_empty_prompt(echo_client: TestClient) -> None:
     assert response.status_code == 422
 
 
+def test_download_logs_returns_generated_entries(echo_client: TestClient) -> None:
+    generate_response = echo_client.post(
+        "/generate",
+        json={"prompt": "Quels sont les signes d'alerte ?", "max_new_tokens": 16},
+    )
+    assert generate_response.status_code == 200
+
+    response = echo_client.get("/logs/download")
+
+    assert response.status_code == 200
+    assert "attachment; filename=\"api.log\"" == response.headers["content-disposition"]
+    body = response.text
+    assert '"event": "request"' in body
+    assert '"path": "/generate"' in body
+    assert '"event": "generation"' in body
+    assert '"event": "response"' in body
+
+
 def test_vllm_backend_proxies_generation(monkeypatch: pytest.MonkeyPatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/chat/completions"
@@ -73,12 +95,14 @@ def test_vllm_backend_proxies_generation(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("VLLM_BASE_URL", "http://127.0.0.1:8001")
     monkeypatch.setattr("app.inference.build_http_client", fake_build_http_client)
 
-    app = create_app()
-    with TestClient(app) as client:
-        response = client.post(
-            "/generate",
-            json={"prompt": "Question test", "max_new_tokens": 32, "temperature": 0.2},
-        )
+    with TemporaryDirectory() as tmpdir:
+        monkeypatch.setenv("API_LOG_PATH", str(Path(tmpdir) / "api.log"))
+        app = create_app()
+        with TestClient(app) as client:
+            response = client.post(
+                "/generate",
+                json={"prompt": "Question test", "max_new_tokens": 32, "temperature": 0.2},
+            )
 
     assert response.status_code == 200
     body = response.json()

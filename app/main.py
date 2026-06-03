@@ -1,11 +1,13 @@
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 
-from fastapi import Body, FastAPI, Request
-from fastapi.responses import Response
+from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, Response
 
 from app.inference import build_backend
 from app.schemas import GenerateRequest, GenerateResponse, HealthResponse, UsageStats
@@ -37,7 +39,26 @@ _GENERATE_EXAMPLES = {
 
 
 logger = logging.getLogger("inference_api")
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger.setLevel(logging.INFO)
+logger.propagate = False
+
+
+def configure_logging() -> Path:
+    log_path = Path(os.getenv("API_LOG_PATH", "/tmp/inference_api.log"))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    formatter = logging.Formatter("%(message)s")
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+
+    for handler in logger.handlers.copy():
+        handler.close()
+        logger.removeHandler(handler)
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
+    return log_path
 
 
 def log_json(event: str, **fields: object) -> None:
@@ -45,9 +66,16 @@ def log_json(event: str, **fields: object) -> None:
 
 
 def create_app() -> FastAPI:
-    backend = build_backend()
     app = FastAPI(title="Fine-tuning OC inference API", version="0.1.0")
-    app.state.backend = backend
+    app.state.backend = None
+    app.state.log_path = configure_logging()
+
+    def get_backend():
+        current_backend = app.state.backend
+        if current_backend is None:
+            current_backend = build_backend()
+            app.state.backend = current_backend
+        return current_backend
 
     @app.middleware("http")
     async def request_response_logger(request: Request, call_next: Callable) -> Response:
@@ -84,12 +112,20 @@ def create_app() -> FastAPI:
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
-        current_backend = app.state.backend
+        try:
+            current_backend = get_backend()
+        except Exception as exc:
+            log_json("health_error", error=exc.__class__.__name__, detail=str(exc))
+            return HealthResponse(status="error", backend="unavailable", model_id="unavailable")
         return HealthResponse(status="ok", backend=current_backend.name, model_id=current_backend.model_id)
 
     @app.post("/generate", response_model=GenerateResponse)
     def generate(payload: GenerateRequest = Body(openapi_examples=_GENERATE_EXAMPLES)) -> GenerateResponse:
-        current_backend = app.state.backend
+        try:
+            current_backend = get_backend()
+        except Exception as exc:
+            log_json("backend_init_error", error=exc.__class__.__name__, detail=str(exc))
+            raise HTTPException(status_code=500, detail="Backend initialization failed") from exc
         result = current_backend.generate(
             prompt=payload.prompt,
             max_new_tokens=payload.max_new_tokens,
@@ -121,6 +157,17 @@ def create_app() -> FastAPI:
             backend=current_backend.name,
             model_id=current_backend.model_id,
             usage=usage,
+        )
+
+    @app.get("/logs/download")
+    def download_logs() -> FileResponse:
+        log_path = app.state.log_path
+        if not log_path.exists():
+            raise HTTPException(status_code=404, detail="Log file not found")
+        return FileResponse(
+            path=log_path,
+            media_type="text/plain; charset=utf-8",
+            filename=log_path.name,
         )
 
     return app
