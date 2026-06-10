@@ -243,36 +243,78 @@ Au stade actuel, le message technique le plus utile a retenir est le suivant :
 
 En resume, la trajectoire cout/performance du projet parait saine, mais elle n'est pas encore completement demontree par des mesures d'exploitation archivees.
 
-## 7. Limites du POC
+## 7. Comment passer a l'echelle vers un modele de classe Qwen 32B
 
-Le projet assume deja plusieurs limites importantes, qu'il faut maintenir explicitement dans un rapport professionnel.
+Si l'objectif devient de depasser un POC frugal pour viser une meilleure qualite de generation, une piste naturelle consiste a conserver l'architecture applicative actuelle tout en remplacant le moteur de generation par un modele beaucoup plus grand, par exemple un Qwen de classe `32B`. L'interet d'un tel changement serait d'augmenter la capacite de raisonnement, la richesse des reformulations, la robustesse multilingue et la tenue des reponses longues. En contrepartie, le projet changerait de categorie technique : on ne parlerait plus d'un serving leger sur GPU unique, mais d'un systeme d'inference distribue et nettement plus couteux.
 
-- Il s'agit d'un POC pedagogique, pas d'un dispositif medical.
-- L'anonymisation reste heuristique et non suffisante pour un contexte de production.
-- Les metriques automatiques ne suffisent pas a valider la surete clinique.
-- Le backend `echo` de la CI ne valide pas l'inference reelle du modele fine-tune.
-- Le pipeline de deploiement existe, mais le benchmark complet FastAPI + vLLM avec le vrai modele reste a finaliser.
-- Les chiffres de latence, debit, VRAM et heures GPU ne sont pas encore centralises dans des artefacts de reporting versionnes.
+L'idee la plus importante est donc la suivante : le passage a l'echelle ne suppose pas forcement de jeter l'architecture actuelle. La separation deja presente entre FastAPI et le backend d'inference constitue au contraire une bonne base. L'API peut continuer a porter le contrat `/health` et `/generate`, la validation des entrees, les logs et d'eventuels garde-fous metier, tandis que la couche inferieure evolue d'un backend `echo` ou `vllm` simple vers un serving distribue capable de charger un modele de tres grande taille.
 
-Cette lucidite renforce plutot le rapport qu'elle ne l'affaiblit. Dans un contexte medical, ne pas surestimer les resultats releve de la rigueur, pas d'un aveu d'echec.
+### 7.1 Ce qui change techniquement avec un modele 32B
 
-## 8. Roadmap priorisee
+Le saut entre `1.7B` et `32B` n'est pas lineaire du point de vue operationnel. Il change simultanement :
 
-Les prochaines etapes les plus importantes pour transformer ce POC en dossier plus solide sont les suivantes :
+- la quantite de VRAM necessaire pour charger les poids du modele ;
+- la bande passante memoire requise pour maintenir une latence acceptable ;
+- le nombre de GPU necessaires pour l'inference ;
+- la complexite du deploiement reseau, du scheduling et de l'observabilite ;
+- le cout unitaire par requete si aucune optimisation n'est mise en place.
 
-1. executer `scripts/benchmark.py` sur une instance GPU avec le vrai backend `vllm` et archiver les resultats ;
-2. exporter dans le depot un tableau de synthese avec latence moyenne, p95, tokens/s, VRAM et cout horaire ;
-3. consigner les durees reelles SFT et DPO pour calculer proprement les heures GPU et le cout d'entrainement ;
-4. ajouter une evaluation qualitative d'exemples reussis et d'echecs cliniquement significatifs ;
-5. evaluer explicitement le checkpoint DPO pour verifier s'il stabilise les gains du SFT ;
-6. rendre le deploiement Google Cloud reproductible de bout en bout avec IAM, build, push et deploiement documentes ;
-7. ajouter des garde-fous applicatifs sur les demandes urgentes, dangereuses ou hors perimetre medical.
+Concretement, un modele de cette classe ne se deploie plus de facon realiste sur une simple `T4`. Meme en quantification aggressive, il faut raisonner en termes de plusieurs GPU haut de gamme, avec parallelisme tensoriel et parfois pipeline parallelism selon le moteur retenu et la taille effective du contexte. Autrement dit, le changement de modele implique un changement d'infrastructure bien avant d'impliquer un changement de code applicatif.
 
-## 9. Conclusion
+### 7.2 Architecture cible pour le serving a grande echelle
 
-Le projet actuel constitue un POC credible de fine-tuning medical bilingue a faible cout. Dans le cadre retenu, les choix methodologiques restent globalement coherents : `Qwen3-1.7B` comme contrainte de depart mais socle encore defensable pour un POC frugal, `LoRA` et la quantification 4-bit pour contenir le cout d'entrainement, `DPO` pour explorer un alignement plus fin, et `vLLM` pour viser un serving plus performant qu'une integration naive.
+Dans une trajectoire de passage a l'echelle serieuse, l'architecture la plus defendable resterait une architecture en couches :
 
-Les resultats disponibles montrent un gain net sur les taches structurees, en particulier les QCM. Sur le texte libre, l'image est plus contrastee : `METEOR` et la distance euclidienne evoluent dans le bon sens en moyenne, tandis que la similarite cosinus reste plus ambigue. La progression est donc reelle, mais encore insuffisante pour parler de qualite clinique robuste.
+```text
+Client -> FastAPI -> service d'inference distribue -> cluster GPU -> modele Qwen 32B
+```
 
-Sur le plan cout/performance, l'architecture cible reste bien choisie pour un budget limite, mais le projet doit encore produire ses mesures finales de latence, debit et heures GPU pour transformer une intuition technique solide en demonstration complete. La suite logique n'est donc pas de changer radicalement d'approche, mais de fermer proprement la boucle de preuve experimentale : benchmark, couts reels, analyse qualitative des erreurs et deploiement reproductible.
+FastAPI conserverait plusieurs responsabilites utiles :
+
+- stabiliser le contrat HTTP pour les clients ;
+- appliquer des validations de payload et des bornes de securite ;
+- journaliser les requetes, les latences et les erreurs ;
+- ajouter des politiques metier, par exemple sur les demandes urgentes ou hors perimetre ;
+- masquer les details d'implementation du moteur de serving.
+
+La couche d'inference, en revanche, devrait monter en gamme. Dans cette hypothese, `vLLM` reste un candidat credible, mais il faudrait l'exploiter dans un mode distribue adapte aux grands modeles, avec :
+
+- parallelisme tensoriel multi-GPU ;
+- quantification si elle reste compatible avec la qualite attendue ;
+- gestion stricte du KV cache et des longueurs de contexte ;
+- supervision des temps de reponse, de la saturation GPU et des erreurs de generation.
+
+L'API actuelle n'aurait alors pas besoin d'etre refondue en profondeur. Le vrai travail porterait surtout sur le backend de serving, l'infrastructure GPU et l'observabilite de production.
+
+### 7.3 Strategie de migration recommandee
+
+Le point critique n'est pas seulement de choisir un plus gros modele, mais de le faire sans perdre la reproductibilite acquise sur le POC. Une trajectoire raisonnable pourrait se decomposer en quatre paliers.
+
+1. conserver le contrat FastAPI actuel et remplacer d'abord le backend `echo` par un backend `vllm` reel sur un modele intermediaire ;
+2. valider le benchmark de bout en bout sur une seule machine GPU plus solide que la `T4` afin d'etablir une premiere base de latence, debit et VRAM ;
+3. migrer ensuite vers un modele plus grand necessitant plusieurs GPU, avec parallelisme explicite et mesures de charge ;
+4. seulement apres cette stabilisation, envisager un modele de classe `32B` avec objectifs de SLA, budget et politiques de routage clairement definis.
+
+Cette progression est importante, car elle evite de passer brutalement d'un POC peu couteux a une pile tres lourde sans zone intermediaire d'apprentissage. Dans beaucoup de projets, la bonne decision n'est pas de passer directement au plus gros modele possible, mais de verifier a partir de quel niveau de taille le gain qualitatif justifie reellement la hausse de complexite et de cout.
+
+### 7.4 Impact sur le fine-tuning et l'alignement
+
+Le passage a un Qwen `32B` pose aussi une question strategique sur l'entrainement. Sur un petit modele, un fine-tuning LoRA en 4-bit reste compatible avec une logique de frugalite. Sur un modele beaucoup plus grand, meme un adaptateur LoRA devient plus exigeant en ressources, en stockage intermediaire, en temps de synchronisation et en orchestration. Le cout d'experimentation augmente donc fortement, meme si l'on evite toujours un full fine-tuning.
+
+Dans ce contexte, deux options deviennent plus realistes qu'un simple portage du POC actuel :
+
+- soit utiliser le grand modele principalement en inference, sans fine-tuning immediat, afin d'evaluer le gain qualitatif brut ;
+- soit reserver le fine-tuning a des cas d'usage tres cibles, avec LoRA, jeu de donnees mieux nettoye, evaluation clinique plus stricte et infrastructure adaptee.
+
+Cette distinction est importante pour la suite du projet. Si le besoin principal est d'ameliorer fortement la qualite de reponse, l'inference sur un grand modele peut suffire dans un premier temps. Si l'objectif est en plus de specialiser finement le comportement medical, alors il faut prevoir une vraie feuille de route MLOps pour les datasets, l'alignement, le versioning des adapters et les campagnes d'evaluation.
+
+### 7.5 Arbitrage cout, performance et valeur metier
+
+Le principal frein a un passage a l'echelle vers `32B` ne sera probablement pas la faisabilite logicielle, mais l'economie du systeme. A ce niveau, le projet doit raisonner non plus seulement en heures GPU, mais en cout par requete utile, en latence acceptable pour l'utilisateur, en debit sous concurrence et en gain clinique reel par rapport a un modele plus petit.
+
+Autrement dit, la bonne question n'est pas seulement : peut-on servir un Qwen `32B` ? La bonne question est plutot : dans quelles conditions ce surcout se traduit-il par une amelioration suffisamment nette pour justifier l'infrastructure, les risques operationnels et l'effort de maintenance ?
+
+Pour un projet medical, cette question est encore plus sensible. Un plus gros modele peut produire des reponses plus fluides et plus convaincantes, sans pour autant garantir a lui seul la surete clinique. Le passage a l'echelle doit donc etre pense comme un changement d'architecture globale : moteur plus puissant, certes, mais aussi evaluation plus exigeante, observabilite plus fine, garde-fous applicatifs plus stricts et gouvernance plus mature sur les usages autorises.
+
+En ce sens, l'architecture actuelle du projet joue deja un role utile : elle fournit un premier squelette separant clairement la couche applicative de la couche d'inference. Si le POC devait evoluer vers une offre plus ambitieuse, cette separation permettrait justement de faire grandir le moteur de generation jusqu'a une classe `32B` sans devoir redefinir entierement l'interface exposee aux utilisateurs.
 
