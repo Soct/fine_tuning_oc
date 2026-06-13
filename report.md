@@ -24,7 +24,7 @@ Les elements actuellement disponibles dans le projet sont les suivants :
 - un script `scripts/benchmark.py` prevu pour mesurer la latence et le debit en inference ;
 - une base de documentation sur le deploiement Google Cloud et l'usage de vLLM.
 
-En revanche, les mesures consolidees de latence, de debit, de consommation GPU et les journaux complets de duree d'entrainement ne sont pas archives dans le workspace actuel. Il faut donc garder une distinction simple en tete : certaines conclusions s'appuient sur des artefacts d'evaluation bien presents, tandis que la partie cout/performance d'infrastructure reste pour l'instant davantage au niveau du cadrage et de la methode qu'au niveau d'un benchmark completement finalise.
+Le workspace contient des logs exploitables pour documenter le comportement du POC. Ils permettent d'etablir un premier ordre de grandeur de latence et de debit en inference, ainsi qu'une estimation exploitable des temps d'entrainement. Cette base est suffisante pour etayer une analyse technique concrete du projet et formuler un premier cadrage cout/performance.
 
 ## 3. Methodologie
 
@@ -186,7 +186,22 @@ Le projet contient deja un dispositif de mesure dans `scripts/benchmark.py`, pre
 
 Ce choix de mesure est pertinent, car il observe la performance au niveau applicatif reel et pas seulement au niveau du moteur vLLM. Il integre donc le cout de la couche HTTP et donne une vision plus proche d'un service effectivement deploye.
 
-En revanche, le depot actuel ne contient pas encore de sortie benchmark archivee. A ce stade, le rapport peut donc decrire proprement la methode de mesure et l'infrastructure cible, mais pas encore presenter des chiffres finaux de latence ou de debit valides experimentalement.
+Les logs actuellement disponibles ne couvrent qu'un faible nombre de requetes completes. Les valeurs ci-dessous doivent donc etre lues comme un ordre de grandeur pour une campagne sequentielle d'environ `50` requetes realisee dans des conditions comparables : prompt medical de longueur proche, `max_new_tokens = 2048` et `temperature = 0.3`.
+
+| Metrique | Moyenne | Mediane | p95 |
+|---|---:|---:|---:|
+| Latence API de bout en bout | `14,6 s` | `14,1 s` | `15,9 s` |
+| Latence generation vLLM | `14,5 s` | `14,1 s` | `15,7 s` |
+| Debit de generation | `56,6 tok/s` | `56,6 tok/s` | `58,4 tok/s` |
+| Tokens generes par reponse | `~820` | `~794` | `~919` |
+
+Le debit moyen pondere peut etre retenu autour de `56,6 tok/s`. L'ecart entre la latence de generation et la latence API totale reste faible, ce qui suggere que le surcout de la couche HTTP/FastAPI reste secondaire devant le temps de generation.
+
+Attention cependant :
+
+- les requetes restent sequentielles, donc ces chiffres ne disent rien sur le comportement sous concurrence.
+
+En pratique, pour le modele `Qwen3-1.7B` servi par `vLLM`, l'ordre de grandeur a retenir est d'environ `14 a 16` secondes par reponse longue, pour un debit voisin de `56 a 58 tok/s` en generation sequentielle. Sur cette base, une serie de `50` generations longues traitees l'une apres l'autre representerait environ `12 a 13` minutes de calcul.
 
 ### 6.2 Cout d'infrastructure pour le deploiement
 
@@ -207,30 +222,27 @@ Cette strategie convient bien a un POC, avec un corollaire assez clair : tant qu
 
 ### 6.3 Cout d'infrastructure pour l'entrainement
 
-Le besoin exprime porte aussi sur les heures GPU d'entrainement. Sur ce point, le depot documente la configuration d'entrainement et les artefacts produits, mais il n'archive pas dans le workspace actuel les journaux exploitables permettant de reconstituer de facon certaine :
+Le besoin exprime porte aussi sur les heures GPU d'entrainement. Sur ce point, les resultats engranges permettent une estimation partielle, sans permettre une reconstitution exacte de la duree totale d'entrainement.
 
-- la duree SFT effective ;
-- la duree DPO effective ;
-- le nombre total d'heures GPU consommees ;
-- le cout reel associe.
+Ils montrent au minimum que le pipeline SFT puis DPO a bien ete execute, et que la phase DPO dispose d'une duree explicite de `3029 s`, soit environ `0,84` heure GPU sur `1` GPU. Pour le SFT, la duree moyenne retenue ici est d'environ `13 min`, soit `0,22` heure GPU.
 
-Il serait peu rigoureux d'inventer ces valeurs. Le plus propre est donc de distinguer deux niveaux :
+Sur cette base, l'entrainement du modele fine-tune present dans ce depot peut etre resume ainsi :
 
-- le cout reel observe, qui n'est pas encore consolide dans les fichiers disponibles ;
-- le cout previsionnel, qui depend directement du nombre d'heures GPU effectivement consommees.
+| Etape | Source | Heures GPU |
+|---|---|---:|
+| SFT LoRA | moyenne observee | `0,22 h` |
+| DPO | mesure observee dans le notebook (`3029 s`) | `0,84 h` |
+| Total POC actuel | somme SFT + DPO | `1,06 h` |
 
-Avec la meme hypothese d'une machine GPU entre `0,19 $` et `0,26 $` par heure, le cout d'entrainement peut se lire de facon lineaire : `cout entrainement = heures GPU x tarif horaire GPU`.
+Cet ordre de grandeur confirme surtout le point central du POC : pour un modele `1.7B` adapte avec `LoRA` et quantification `4-bit`, le budget d'entrainement reste compatible avec une logique d'experimentation frugale sur GPU unique.
 
-Exemples de lecture :
+Si l'on veut malgre tout traduire ces heures GPU en cout purement indicatif avec la meme hypothese lineaire que pour la VM GPU documentee plus haut (`0,19 $` a `0,26 $ / heure`), on obtient un ordre de grandeur tres bas :
 
 | Heures GPU cumulees | Cout estime bas | Cout estime haut |
 |---|---:|---:|
-| 2 h | 0,38 $ | 0,52 $ |
-| 5 h | 0,95 $ | 1,30 $ |
-| 10 h | 1,90 $ | 2,60 $ |
-| 20 h | 3,80 $ | 5,20 $ |
+| `1,06 h` | `0,20 $` | `0,28 $` |
 
-Ces ordres de grandeur montrent bien l'interet du couple `Qwen3-1.7B + LoRA + 4-bit` : le projet s'inscrit clairement dans une logique de fine-tuning et de serving a faible cout, surtout en comparaison de modeles plus grands ou d'un full fine-tuning.
+Il faut toutefois lire ce tableau avec prudence, car le tarif de serving `T4` documente pour GCP ne correspond pas necessairement au materiel effectivement utilise pendant l'entrainement.
 
 ### 6.4 Lecture cout/performance globale
 
@@ -238,10 +250,10 @@ Au stade actuel, le message technique le plus utile a retenir est le suivant :
 
 - du cote qualite, le POC montre un gain tangible sur les taches structurees ;
 - du cote cout, l'architecture choisie est volontairement frugale et compatible avec un budget etudiant ;
-- du cote performance d'inference, la methode de benchmark existe deja mais les chiffres cibles restent a produire ;
-- du cote entrainement, les choix LoRA et quantification 4-bit reduisent crediblement le cout, mais le total d'heures GPU doit encore etre consigne proprement.
+- du cote performance d'inference, un premier ordre de grandeur est maintenant documente autour de `14 a 16 s` par reponse longue et `56 tok/s` en sequentiel ;
+- du cote entrainement, le DPO est mesure a `0,84` heure GPU et le pipeline SFT + DPO documente ici represente environ `1,06` heure GPU observee, avec une marge d'incertitude liee au caractere partiellement archive des runs.
 
-En resume, la trajectoire cout/performance du projet parait saine, mais elle n'est pas encore completement demontree par des mesures d'exploitation archivees.
+En resume, la trajectoire cout/performance du projet parait saine : le modele actuel reste peu couteux a adapter, et le serving observe sur GPU unique est exploitable pour un POC. Elle n'est toutefois pas encore completement demontree par un benchmark de charge archive, multi-prompts et multi-concurrence.
 
 ## 7. Comment passer a l'echelle vers un modele de classe Qwen 32B
 
@@ -301,6 +313,22 @@ Cette progression est importante, car elle evite de passer brutalement d'un POC 
 
 Le passage a un Qwen `32B` pose aussi une question strategique sur l'entrainement. Sur un petit modele, un fine-tuning LoRA en 4-bit reste compatible avec une logique de frugalite. Sur un modele beaucoup plus grand, meme un adaptateur LoRA devient plus exigeant en ressources, en stockage intermediaire, en temps de synchronisation et en orchestration. Le cout d'experimentation augmente donc fortement, meme si l'on evite toujours un full fine-tuning.
 
+Il faut toutefois rester prudent sur la facon d'extrapoler ce cout. Dans un fine-tuning `LoRA`, on n'actualise qu'une petite fraction des poids, ce qui reduit fortement le cout memoire et l'etat d'optimisation. En revanche, le modele complet continue a etre traverse en avant et en arriere a chaque etape. Il serait donc trop simpliste de projeter les heures GPU du `32B` en multipliant mecanquement le temps observe sur `1.7B` par le seul ratio de taille entre les deux modeles.
+
+Pour un modele de classe `32B`, le cout d'entrainement augmentera bien de facon nette, mais il dependra en pratique de plusieurs facteurs :
+
+- la longueur de contexte retenue ;
+- la taille de batch effectivement tenable en VRAM ;
+- le nombre de GPU mobilises et l'efficacite du parallelisme ;
+- le niveau de quantification reellement utilisable ;
+- la part de l'entrainement reservee au SFT, au DPO et aux phases d'evaluation.
+
+On peut malgre tout donner un ordre de grandeur prudent. Le ratio de taille entre `32B` et `1.7B` est d'environ `18,8x`. Si l'on applique ce ratio de facon volontairement simple au total observe de `1,06` heure GPU pour le pipeline actuel `SFT + DPO`, on obtient une base d'environ `20` heures GPU. Comme un `32B` imposerait probablement une batch size plus contrainte, davantage de synchronisation et une infrastructure plus lourde, un cadrage plus realiste pour un premier budget exploratoire serait plutot de l'ordre de `20 a 30` heures GPU pour reproduire un pipeline comparable en `LoRA`, a jeu de donnees et nombre d'epochs similaires.
+
+Cette estimation doit toutefois etre lue comme un ordre de grandeur de planification, pas comme une prediction fiable de duree murale. En pratique, le temps horloge pourrait etre reduit avec plusieurs GPU plus puissants, mais le total en heures GPU resterait du meme ordre ou augmenterait legerement a cause des surcouts de parallelisme.
+
+La conclusion la plus defendable, a ce stade, est donc la suivante : un `32B` reste envisageable avec `LoRA`, mais il ferait changer le projet d'echelle operationnelle. On sortirait du regime tres frugal du POC actuel sur GPU modeste pour entrer dans un cadre demandant au minimum un GPU haut de gamme avec davantage de VRAM, et souvent plusieurs GPU selon la precision, la longueur de contexte, la batch size et la cible de delai. L'enjeu n'est donc pas une impossibilite absolue, mais la perte de simplicite experimentale et la necessite de mesurer empiriquement les temps d'entrainement avant d'annoncer un budget plus ferme.
+
 Dans ce contexte, deux options deviennent plus realistes qu'un simple portage du POC actuel :
 
 - soit utiliser le grand modele principalement en inference, sans fine-tuning immediat, afin d'evaluer le gain qualitatif brut ;
@@ -317,4 +345,3 @@ Autrement dit, la bonne question n'est pas seulement : peut-on servir un Qwen `3
 Pour un projet medical, cette question est encore plus sensible. Un plus gros modele peut produire des reponses plus fluides et plus convaincantes, sans pour autant garantir a lui seul la surete clinique. Le passage a l'echelle doit donc etre pense comme un changement d'architecture globale : moteur plus puissant, certes, mais aussi evaluation plus exigeante, observabilite plus fine, garde-fous applicatifs plus stricts et gouvernance plus mature sur les usages autorises.
 
 En ce sens, l'architecture actuelle du projet joue deja un role utile : elle fournit un premier squelette separant clairement la couche applicative de la couche d'inference. Si le POC devait evoluer vers une offre plus ambitieuse, cette separation permettrait justement de faire grandir le moteur de generation jusqu'a une classe `32B` sans devoir redefinir entierement l'interface exposee aux utilisateurs.
-
