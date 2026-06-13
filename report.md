@@ -311,21 +311,31 @@ Cette progression est importante, car elle evite de passer brutalement d'un POC 
 
 ### 7.4 Impact sur le fine-tuning et l'alignement
 
-Le passage a un Qwen `32B` pose aussi une question strategique sur l'entrainement. Sur un petit modele, un fine-tuning LoRA en 4-bit reste compatible avec une logique de frugalite. Sur un modele beaucoup plus grand, meme un adaptateur LoRA devient plus exigeant en ressources, en stockage intermediaire, en temps de synchronisation et en orchestration. Le cout d'experimentation augmente donc fortement, meme si l'on evite toujours un full fine-tuning.
+Le passage à un Qwen `32B` pose aussi une question stratégique sur l'entraînement. Sur un petit modèle, un fine-tuning LoRA en 4-bit reste compatible avec une logique de frugalité. Sur un modèle beaucoup plus grand, même un adaptateur LoRA devient plus exigeant en ressources, en stockage intermédiaire, en temps de synchronisation et en orchestration. Le coût d'expérimentation augmente donc fortement, même si l'on évite toujours un full fine-tuning.
 
-Il faut toutefois rester prudent sur la facon d'extrapoler ce cout. Dans un fine-tuning `LoRA`, on n'actualise qu'une petite fraction des poids, ce qui reduit fortement le cout memoire et l'etat d'optimisation. En revanche, le modele complet continue a etre traverse en avant et en arriere a chaque etape. Il serait donc trop simpliste de projeter les heures GPU du `32B` en multipliant mecanquement le temps observe sur `1.7B` par le seul ratio de taille entre les deux modeles.
+Il faut toutefois rester prudent sur la façon d'extrapoler ce coût. Dans un fine-tuning `LoRA`, on n'actualise qu'une petite fraction des poids, ce qui réduit fortement le coût mémoire et l'état d'optimisation. En revanche, le modèle complet continue à être traversé en avant et en arrière à chaque étape. Il serait donc trop simpliste de projeter les heures GPU du `32B` en multipliant mécaniquement le temps observé sur `1.7B` par le seul ratio de taille entre les deux modèles.
 
-Pour un modele de classe `32B`, le cout d'entrainement augmentera bien de facon nette, mais il dependra en pratique de plusieurs facteurs :
+Pour le POC actuel, les temps observés peuvent déjà être distingués entre la phase de fine-tuning supervisé et la phase d'alignement par préférences :
 
-- la longueur de contexte retenue ;
-- la taille de batch effectivement tenable en VRAM ;
-- le nombre de GPU mobilises et l'efficacite du parallelisme ;
-- le niveau de quantification reellement utilisable ;
-- la part de l'entrainement reservee au SFT, au DPO et aux phases d'evaluation.
+| Étape | Temps observé | Part du total |
+|---|---:|---:|
+| SFT LoRA | `0,22 h GPU` | `20,8 %` |
+| DPO | `0,84 h GPU` | `79,2 %` |
+| Total pipeline actuel | `1,06 h GPU` | `100 %` |
 
-On peut malgre tout donner un ordre de grandeur prudent. Le ratio de taille entre `32B` et `1.7B` est d'environ `18,8x`. Si l'on applique ce ratio de facon volontairement simple au total observe de `1,06` heure GPU pour le pipeline actuel `SFT + DPO`, on obtient une base d'environ `20` heures GPU. Comme un `32B` imposerait probablement une batch size plus contrainte, davantage de synchronisation et une infrastructure plus lourde, un cadrage plus realiste pour un premier budget exploratoire serait plutot de l'ordre de `20 a 30` heures GPU pour reproduire un pipeline comparable en `LoRA`, a jeu de donnees et nombre d'epochs similaires.
+Cette séparation est utile, car elle montre que, dans l'état actuel du projet, le coût d'entraînement n'est pas réparti uniformément : la phase `DPO` représente la majeure partie du budget GPU observé. Autrement dit, si l'on cherche à contenir les coûts dans une future montée en gamme, ce n'est pas seulement la taille du modèle qui compte, mais aussi la place effective donnée au pipeline d'alignement.
 
-En se basant sur les tarifs observés sur RunPod (runpod.io), un `A100 80GB` se situe autour de `1,19 à 1,39 $/h`, tandis qu'un `H100 80GB` se situe plutôt autour de `1,99 à 2,69 $/h`. Cela permet de transformer plus concrètement l'ordre de grandeur en budget calculatoire.
+On peut malgré tout donner un ordre de grandeur prudent pour un passage à `32B`. Le ratio de taille entre `32B` et `1.7B` est d'environ `18,8x`. En appliquant ce ratio de façon volontairement simple aux deux composantes du pipeline actuel, on obtient la projection indicative suivante :
+
+| Étape | Base observée `1.7B` | Projection simple `32B` |
+|---|---:|---:|
+| SFT LoRA | `0,22 h GPU` | `4,1 h GPU` |
+| DPO | `0,84 h GPU` | `15,8 h GPU` |
+| Total | `1,06 h GPU` | `19,9 h GPU` |
+
+Cette projection reste volontairement simplifiée. En pratique, un `32B` imposerait probablement une batch size plus contrainte, davantage de synchronisation, plus de pression mémoire et une infrastructure plus lourde. Pour cette raison, un cadrage plus réaliste pour un premier budget exploratoire serait plutôt de l'ordre de `20 à 30` heures GPU pour reproduire un pipeline comparable en `LoRA`, à jeu de données et nombre d'epochs similaires.
+
+En se basant sur les tarifs observés sur RunPod, un `A100 80GB` se situe autour de `1,19 à 1,39 $/h`, tandis qu'un `H100 80GB` se situe plutôt autour de `1,99 à 2,69 $/h`. Cela permet de transformer plus concrètement l'ordre de grandeur en budget calculatoire.
 
 | GPU RunPod | Prix horaire | Coût pour 20 h GPU | Coût pour 30 h GPU |
 |---|---:|---:|---:|
