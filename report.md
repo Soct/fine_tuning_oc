@@ -325,16 +325,31 @@ Pour un modele de classe `32B`, le cout d'entrainement augmentera bien de facon 
 
 On peut malgre tout donner un ordre de grandeur prudent. Le ratio de taille entre `32B` et `1.7B` est d'environ `18,8x`. Si l'on applique ce ratio de facon volontairement simple au total observe de `1,06` heure GPU pour le pipeline actuel `SFT + DPO`, on obtient une base d'environ `20` heures GPU. Comme un `32B` imposerait probablement une batch size plus contrainte, davantage de synchronisation et une infrastructure plus lourde, un cadrage plus realiste pour un premier budget exploratoire serait plutot de l'ordre de `20 a 30` heures GPU pour reproduire un pipeline comparable en `LoRA`, a jeu de donnees et nombre d'epochs similaires.
 
-Cette estimation doit toutefois etre lue comme un ordre de grandeur de planification, pas comme une prediction fiable de duree murale. En pratique, le temps horloge pourrait etre reduit avec plusieurs GPU plus puissants, mais le total en heures GPU resterait du meme ordre ou augmenterait legerement a cause des surcouts de parallelisme.
+En se basant sur les tarifs observés sur RunPod (runpod.io), un `A100 80GB` se situe autour de `1,19 à 1,39 $/h`, tandis qu'un `H100 80GB` se situe plutôt autour de `1,99 à 2,69 $/h`. Cela permet de transformer plus concrètement l'ordre de grandeur en budget calculatoire.
 
-La conclusion la plus defendable, a ce stade, est donc la suivante : un `32B` reste envisageable avec `LoRA`, mais il ferait changer le projet d'echelle operationnelle. On sortirait du regime tres frugal du POC actuel sur GPU modeste pour entrer dans un cadre demandant au minimum un GPU haut de gamme avec davantage de VRAM, et souvent plusieurs GPU selon la precision, la longueur de contexte, la batch size et la cible de delai. L'enjeu n'est donc pas une impossibilite absolue, mais la perte de simplicite experimentale et la necessite de mesurer empiriquement les temps d'entrainement avant d'annoncer un budget plus ferme.
+| GPU RunPod | Prix horaire | Coût pour 20 h GPU | Coût pour 30 h GPU |
+|---|---:|---:|---:|
+| A100 80GB PCIe | `1,19 $/h` | `23,8 $` | `35,7 $` |
+| A100 80GB SXM | `1,39 $/h` | `27,8 $` | `41,7 $` |
+| H100 80GB PCIe | `1,99 $/h` | `39,8 $` | `59,7 $` |
+| H100 80GB SXM | `2,69 $/h` | `53,8 $` | `80,7 $` |
 
-Dans ce contexte, deux options deviennent plus realistes qu'un simple portage du POC actuel :
+Ces ordres de grandeur montrent que la phase purement calculatoire d'un premier fine-tuning `LoRA` sur un `32B` reste encore accessible financièrement. En première approximation, un run de reproduction du pipeline actuel se situerait donc autour de `24 à 81 $` selon le type de GPU retenu. Dans une logique de frugalité, l'`A100` apparaît comme le point d'équilibre le plus crédible entre coût, capacité mémoire et simplicité d'accès.
 
-- soit utiliser le grand modele principalement en inference, sans fine-tuning immediat, afin d'evaluer le gain qualitatif brut ;
-- soit reserver le fine-tuning a des cas d'usage tres cibles, avec LoRA, jeu de donnees mieux nettoye, evaluation clinique plus stricte et infrastructure adaptee.
+Il faut toutefois ajouter à cette base le coût des essais invalidés, des variations d'hyperparamètres, des évaluations intermédiaires, ainsi que les éventuels surcoûts de stockage et d'orchestration. En pratique, pour une première campagne sérieuse avec plusieurs essais `SFT + DPO`, une enveloppe de planification plus réaliste serait plutôt de l'ordre de `100 à 300 $`, voire davantage si plusieurs runs comparatifs ou plusieurs configurations de contexte doivent être testés.
 
-Cette distinction est importante pour la suite du projet. Si le besoin principal est d'ameliorer fortement la qualite de reponse, l'inference sur un grand modele peut suffire dans un premier temps. Si l'objectif est en plus de specialiser finement le comportement medical, alors il faut prevoir une vraie feuille de route MLOps pour les datasets, l'alignement, le versioning des adapters et les campagnes d'evaluation.
+Cette estimation doit toutefois être lue comme un ordre de grandeur de planification, pas comme une prédiction fiable de durée murale. En pratique, le temps horloge pourrait être réduit avec plusieurs GPU plus puissants, mais le total en heures GPU resterait du même ordre ou augmenterait légèrement à cause des surcoûts de parallélisme.
+
+La conclusion la plus défendable, à ce stade, est donc la suivante : un `32B` reste envisageable avec `LoRA`, mais il ferait clairement changer le projet d'échelle opérationnelle. On sortirait du régime très frugal du POC actuel sur infrastructure légère pour entrer dans un cadre demandant au minimum un GPU haut de gamme avec davantage de VRAM, et souvent plusieurs GPU selon la précision retenue, la longueur de contexte, la batch size et la contrainte de délai.
+
+L'enjeu n'est donc pas une impossibilité absolue, mais plutôt une perte de simplicité expérimentale. À partir de cette taille de modèle, il devient nécessaire de mesurer empiriquement les temps d'entraînement, les coûts réels d'itération et les contraintes de stabilité avant d'annoncer un budget plus ferme.
+
+Dans ce contexte, deux options paraissent plus réalistes qu'un simple portage du POC actuel :
+
+- soit utiliser le grand modèle principalement en inférence, sans fine-tuning immédiat, afin d'évaluer d'abord le gain qualitatif brut ;
+- soit réserver le fine-tuning à des cas d'usage très ciblés, avec `LoRA`, jeu de données mieux nettoyé, protocole d'évaluation plus strict et infrastructure adaptée.
+
+Cette distinction est importante pour la suite du projet. Si le besoin principal est d'améliorer fortement la qualité de réponse, l'inférence sur un grand modèle peut suffire dans un premier temps. Si l'objectif est en plus de spécialiser finement le comportement médical, alors il faut prévoir une véritable feuille de route `MLOps` couvrant les datasets, l'alignement, le versioning des adapters, la traçabilité des runs et les campagnes d'évaluation.
 
 ### 7.5 Arbitrage cout, performance et valeur metier
 
