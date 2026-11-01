@@ -2,7 +2,9 @@
 
 Ce depot est un POC de fine-tuning medical bilingue francais/anglais autour de `Qwen3-1.7B`. Il couvre la preparation d'un dataset SFT/DPO, l'entrainement LoRA avec Unsloth/PEFT, une passe DPO et une evaluation comparative entre le modele de base et le modele fine-tune.
 
-Etat actuel : la partie dataset et entrainement est avancee. La partie deploiement API, Docker, CI/CD et benchmark d'inference reste a finaliser.
+> [!WARNING]
+> Le projet n’a pas été remis en ligne pour des raisons budgétaires. Le coût estimé de l’hébergement sur GCP (490 USD/mois), même en Spot (181,39 USD/mois), ne permet pas de maintenir une démonstration accessible en continu.
+
 
 ## Objectifs
 
